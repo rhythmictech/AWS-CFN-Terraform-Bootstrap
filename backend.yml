@@ -1,0 +1,140 @@
+#TFState-aws-fecitss
+#CloudFormation for creating the Terraform backend in AWS (s3 bucket, dynamodb table)
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'Bootstraps Terraform S3 backend'
+Parameters:
+  AccountId:
+    Type: 'String'
+    Description: 'Account ID of the account that will manage state in this bucket (leave blank if the state is for this AWS account)'
+  CreateDynamoDB:
+    Default: true
+    Type: String
+    AllowedValues: [true, false]
+    Description: 'Whether DynamoDB state lock table should be created (do not set this to true if using a remote account)'
+  CreateLoggingBucket:
+    Default: true
+    Type: String
+    AllowedValues: [true, false]
+    Description: 'Whether S3 buckets should be created (if this is false, the LoggingBucketName must be a valid S3 logging bucket in this account)'
+  CreateStateBucket:
+    Default: true
+    Type: String
+    AllowedValues: [true, false]
+    Description: 'Whether S3 buckets should be created (set this to true in a remote account)'
+  DynamoDBLockTableName:
+    Type: 'String'
+    Description: 'Name of the tf state lock table (tf-locktable used if not specified)'
+  LoggingBucketName:
+    Type: 'String'
+    Description: 'Name of the bucket for logging access to the tfstate bucket ([ACCOUNT_ID]-[REGION]-tf-state-logging used if not specified)'
+  LoggingPrefix:
+    Type: 'String'
+    Description: 'Prefix to use for tfstate bucket access logs (can be blank)'
+  StateBucketName:
+    Type: 'String'
+    Description: 'Name of the tf state bucket ([ACCOUNT_ID]-[REGION]-tf-state used if not specified)'
+
+Conditions:
+  CreateDynamoDB: !Equals [true, !Ref CreateDynamoDB]
+  CreateLoggingBucket: !Equals [true, !Ref CreateLoggingBucket]
+  CreateStateBucket: !Equals [true, !Ref CreateStateBucket]
+  DynamoDBLockTableNameProvided: !Not [ !Equals [ !Ref DynamoDBLockTableName, "" ] ]
+  LoggingBucketNameProvided: !Not [ !Equals [ !Ref LoggingBucketName, "" ] ]
+  StateBucketNameProvided: !Not [ !Equals [ !Ref StateBucketName, "" ] ]
+  AccountIdProvided: !Not [ !Equals [ !Ref AccountId, "" ] ]
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Condition: CreateStateBucket
+    Properties:
+      Description: "S3 KMS key for tfstate"
+      KeyPolicy:
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          Action: 'kms:*'
+          Resource: '*'
+        - Effect: Allow
+          Principal:
+            AWS: !If [ AccountIdProvided, !Sub 'arn:aws:iam::${AccountId}:root', !Sub 'arn:aws:iam::${AWS::AccountId}:root' ]
+          Action:
+            - kms:Encrypt*
+            - kms:Decrypt*
+            - kms:ReEncrypt*
+            - kms:GenerateDataKey*
+            - kms:DescribeKey
+          Resource: '*'
+  LoggingBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateLoggingBucket
+    Properties:
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      BucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
+    #DeletionPolicy: Retain
+  StateBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateStateBucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !GetAtt KMSKey.Arn
+              SSEAlgorithm: aws:kms
+      BucketName: !If [ StateBucketNameProvided, !Ref StateBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state' ]
+      LifecycleConfiguration:
+        Rules:
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: '365'
+      LoggingConfiguration:
+        DestinationBucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
+        LogFilePrefix: !Ref LoggingPrefix
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+    #DeletionPolicy: Retain
+  StateBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateStateBucket
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !If [ AccountIdProvided, !Sub 'arn:aws:iam::${AccountId}:root', !Sub 'arn:aws:iam::${AWS::AccountId}:root' ]
+            Action:
+              - 's3:DeleteObject'
+              - 's3:GetObject'
+              - 's3:PutObject'
+            Resource: !Sub 'arn:aws:s3:::${StateBucket}/*'
+          - Effect: Allow
+            Principal:
+              AWS: !If [ AccountIdProvided, !Sub 'arn:aws:iam::${AccountId}:root', !Sub 'arn:aws:iam::${AWS::AccountId}:root' ]
+            Action:
+              - 's3:ListBucket'
+            Resource: !Sub 'arn:aws:s3:::${StateBucket}'
+      Bucket: !Ref StateBucket
+
+  DynamoDBLockTable:
+    Type: AWS::DynamoDB::Table
+    Condition: CreateDynamoDB
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "LockID"
+          AttributeType: "S"
+      BillingMode: "PAY_PER_REQUEST"
+      KeySchema:
+        - AttributeName: "LockID"
+          KeyType: "HASH"
+      TableName: !If [ DynamoDBLockTableNameProvided, !Ref DynamoDBLockTableName, "tf-locktable" ]
