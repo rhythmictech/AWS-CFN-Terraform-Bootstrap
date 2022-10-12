@@ -1,12 +1,13 @@
-#TFState-aws-fecitss
+
 #CloudFormation for creating the Terraform backend in AWS (s3 bucket, dynamodb table)
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: 'Bootstraps Terraform S3 backend'
 Parameters:
   AccountId:
-    Type: 'String'
+    Default: ""
     Description: 'Account ID of the account that will manage state in this bucket (leave blank if the state is for this AWS account)'
+    Type: 'String'
   CreateDynamoDB:
     Default: true
     Type: String
@@ -23,15 +24,19 @@ Parameters:
     AllowedValues: [true, false]
     Description: 'Whether S3 buckets should be created (set this to true in a remote account)'
   DynamoDBLockTableName:
+    Default: ""
     Type: 'String'
     Description: 'Name of the tf state lock table (tf-locktable used if not specified)'
   LoggingBucketName:
+    Default: ""
     Type: 'String'
     Description: 'Name of the bucket for logging access to the tfstate bucket ([ACCOUNT_ID]-[REGION]-tf-state-logging used if not specified)'
   LoggingPrefix:
+    Default: ""
     Type: 'String'
     Description: 'Prefix to use for tfstate bucket access logs (can be blank)'
   StateBucketName:
+    Default: ""
     Type: 'String'
     Description: 'Name of the tf state bucket ([ACCOUNT_ID]-[REGION]-tf-state used if not specified)'
 
@@ -43,7 +48,9 @@ Conditions:
   LoggingBucketNameProvided: !Not [ !Equals [ !Ref LoggingBucketName, "" ] ]
   StateBucketNameProvided: !Not [ !Equals [ !Ref StateBucketName, "" ] ]
   AccountIdProvided: !Not [ !Equals [ !Ref AccountId, "" ] ]
+
 Resources:
+
   KMSKey:
     Type: AWS::KMS::Key
     Condition: CreateStateBucket
@@ -66,6 +73,7 @@ Resources:
             - kms:GenerateDataKey*
             - kms:DescribeKey
           Resource: '*'
+
   LoggingBucket:
     Type: AWS::S3::Bucket
     Condition: CreateLoggingBucket
@@ -77,6 +85,7 @@ Resources:
               SSEAlgorithm: 'AES256'
       BucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
     #DeletionPolicy: Retain
+
   StateBucket:
     Type: AWS::S3::Bucket
     Condition: CreateStateBucket
@@ -90,9 +99,11 @@ Resources:
       BucketName: !If [ StateBucketNameProvided, !Ref StateBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state' ]
       LifecycleConfiguration:
         Rules:
-          - Id: RetentionRule
+          - Id: ExpireOldObjects
             Status: Enabled
-            ExpirationInDays: '365'
+            NoncurrentVersionTransition:
+              TransitionInDays: 365
+              StorageClass: GLACIER
       LoggingConfiguration:
         DestinationBucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
         LogFilePrefix: !Ref LoggingPrefix
@@ -104,6 +115,7 @@ Resources:
         IgnorePublicAcls: True
         RestrictPublicBuckets: True
     #DeletionPolicy: Retain
+
   StateBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Condition: CreateStateBucket
