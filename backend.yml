@@ -150,3 +150,17 @@ Resources:
         - AttributeName: "LockID"
           KeyType: "HASH"
       TableName: !If [ DynamoDBLockTableNameProvided, !Ref DynamoDBLockTableName, "tf-locktable" ]
+
+Outputs:
+
+  bucket:
+    Value: !Ref StateBucket
+
+  key:
+    Value: !Ref KMSKey
+
+  dynamodbtable:
+    Value: !Ref DynamoDBLockTable
+
+  region:
+    Value: !Ref AWS::Region
