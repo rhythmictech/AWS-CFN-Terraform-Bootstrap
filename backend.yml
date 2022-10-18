@@ -84,6 +84,11 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
       BucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
     #DeletionPolicy: Retain
 
   StateBucket:
