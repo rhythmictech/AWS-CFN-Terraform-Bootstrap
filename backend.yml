@@ -73,12 +73,14 @@ Resources:
             - kms:GenerateDataKey*
             - kms:DescribeKey
           Resource: '*'
+      Tags:
+        - Key: Name
+          Value: Terraform-backend-state-key
 
   LoggingBucket:
     Type: AWS::S3::Bucket
     Condition: CreateLoggingBucket
     Properties:
-      AccessControl: LogDeliveryWrite
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -89,13 +91,31 @@ Resources:
         BlockPublicPolicy: True
         IgnorePublicAcls: True
         RestrictPublicBuckets: True
-    #DeletionPolicy: Retain
+      Tags:
+        - Key: Name
+          Value : !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
+
+  LoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateLoggingBucket
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "logging.s3.amazonaws.com"
+            Action:
+              - 's3:PutObject'
+            Resource: !Sub 'arn:aws:s3:::${LoggingBucket}/*'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": "${AccountId}"
+      Bucket: !Ref LoggingBucket
 
   StateBucket:
     Type: AWS::S3::Bucket
     Condition: CreateStateBucket
     Properties:
-      AccessControl: Private
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -112,6 +132,9 @@ Resources:
       LoggingConfiguration:
         DestinationBucketName: !If [ LoggingBucketNameProvided, !Ref LoggingBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state-logging' ]
         LogFilePrefix: !Ref LoggingPrefix
+      Tags:
+        - Key: Name
+          Value: !If [ StateBucketNameProvided, !Ref StateBucketName, !Sub '${AWS::AccountId}-${AWS::Region}-tf-state' ]
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -119,7 +142,6 @@ Resources:
         BlockPublicPolicy: True
         IgnorePublicAcls: True
         RestrictPublicBuckets: True
-    #DeletionPolicy: Retain
 
   StateBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -155,6 +177,9 @@ Resources:
         - AttributeName: "LockID"
           KeyType: "HASH"
       TableName: !If [ DynamoDBLockTableNameProvided, !Ref DynamoDBLockTableName, "tf-locktable" ]
+      Tags:
+        - Key: Name
+          Value: !If [ DynamoDBLockTableNameProvided, !Ref DynamoDBLockTableName, "tf-locktable" ]
 
 Outputs:
 
